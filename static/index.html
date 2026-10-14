@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Seoul Taste Agent</title>
+<style>
+:root{--bg:#faf8f5;--fg:#1d1b19;--mut:#6b6560;--card:#fff;--ac:#d6336c;--bd:#e6e0d9}
+@media(prefers-color-scheme:dark){:root{--bg:#171513;--fg:#f1ece6;--mut:#a39b92;--card:#211e1b;--bd:#35302b}}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,sans-serif}
+main{max-width:760px;margin:0 auto;padding:24px 16px}
+h1{margin:.2em 0}textarea{width:100%;box-sizing:border-box;padding:10px;font:inherit;border:1px solid var(--bd);border-radius:8px;background:var(--card);color:var(--fg)}
+button{margin-top:8px;padding:10px 18px;border:0;border-radius:8px;background:var(--ac);color:#fff;font:inherit;cursor:pointer}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:12px 14px;margin:10px 0}
+.mut{color:var(--mut);font-size:.9em}.warn{border-color:#c77;background:#c771}
+.slot{font-weight:600;color:var(--ac)}.bar{height:6px;background:var(--ac);border-radius:3px}
+.tag{display:inline-block;font-size:.8em;border:1px solid var(--bd);border-radius:10px;padding:0 8px;margin-right:4px}
+details pre{overflow:auto;font-size:.8em}
+</style></head><body><main>
+<h1>Seoul Taste Agent</h1>
+<p class="mut">Tell it what you love. An agent asks Qloo's taste graph which Seoul neighborhoods and places match, then builds your one-day route.</p>
+<div id="status" class="mut"></div>
+<textarea id="t" rows="3" placeholder="e.g. Bill Evans, Parasite film, Radiohead band, Haruki Murakami book"></textarea>
+<button id="go">Plan my Seoul day</button>
+<div id="out"></div>
+<p class="mut">Qloo results describe aggregate affinities, not facts about you. No personal data is sent to Qloo.</p>
+<script>
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+fetch("/api/status").then(r=>r.json()).then(s=>{$("status").textContent=s.qloo_live?"Connected to live Qloo Taste API":"Offline simulation mode (no Qloo key on this server): results below are synthetic."}).catch(()=>{});
+$("go").onclick=async()=>{
+  $("out").innerHTML='<p class="mut">The agent is working...</p>';
+  const r=await fetch("/api/plan",{method:"POST",body:JSON.stringify({text:$("t").value})});
+  const d=await r.json();
+  if(d.error){$("out").innerHTML='<div class="card warn">'+esc(d.error)+'</div>';return}
+  let h=(d.simulated?'<div class="card warn">SIMULATED data - not from Qloo.</div>':'')+'<div class="card">'+esc(d.summary)+'</div><h2>Your route</h2>';
+  d.route.forEach(x=>h+='<div class="card"><span class="slot">'+esc(x.slot)+'</span> in '+esc(x.district)+'<br><b>'+esc(x.name)+'</b> '+(x.affinity!=null?'<span class="mut">affinity '+esc(x.affinity)+'</span>':'')+'<br>'+(x.tags||[]).map(t=>'<span class="tag">'+esc(t)+'</span>').join("")+'</div>');
+  h+='<h2>Neighborhood match</h2>';
+  const mx=Math.max(...d.districts.map(x=>x.score),0.0001);
+  d.districts.forEach(x=>h+='<div class="card">'+esc(x.district)+' <span class="mut">'+esc(x.score)+'</span><div class="bar" style="width:'+(100*x.score/mx)+'%"></div></div>');
+  h+='<details class="card"><summary>Agent trace (tool calls)</summary><pre>'+esc(JSON.stringify(d.trace,null,1))+'</pre></details>';
+  $("out").innerHTML=h;
+};
+</script></main></body></html>
