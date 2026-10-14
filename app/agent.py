@@ -1,6 +1,6 @@
 """Seoul Taste Agent: a small tool-using agent loop grounded in Qloo.
 
-plan -> resolve (Qloo /search) -> probe each district (Qloo /v2/insights, place) ->
+plan -> probe each district (`qloo exec recommend`, target_type=place, names resolved by Qloo) ->
 rank -> compose a one-day route. Every step is recorded in a trace shown in the UI.
 An optional LLM (Anthropic key) parses free text and writes the narrative; without
 one, a deterministic parser/template is used so the app never depends on a paid model.
@@ -45,48 +45,53 @@ def parse_tastes(text, llm=None):
     return out[:6]
 
 
+def _summarize(envelope):
+    return [e for e in (envelope.get("results") or []) if isinstance(e, dict)]
+
+
 def run_agent(text, qloo, llm=None, districts=None):
     trace = []
     tastes = parse_tastes(text, llm)
-    trace.append({"step": "parse_tastes", "output": tastes})
-    if not tastes:
+    seeds = [t["text"] for t in tastes]
+    trace.append({"step": "parse_tastes", "output": seeds})
+    if not seeds:
         return {"error": "Tell me a few things you love (artists, films, shows, books).", "trace": trace}
 
-    resolved = []
-    for t in tastes:
-        hits = qloo.search(t["text"], t["type"], take=1)
-        if hits:
-            h = hits[0]
-            resolved.append({"input": t["text"], "name": h.get("name", t["text"]), "id": h.get("entity_id") or h.get("id"),
-                             "tags": [x.get("name") for x in h.get("tags", []) if isinstance(x, dict)][:5]})
-    resolved = [r for r in resolved if r["id"]]
-    trace.append({"step": "qloo.search", "output": [{k: r[k] for k in ("input", "name", "id")} for r in resolved]})
-    if not resolved:
-        return {"error": "Qloo could not match any of those. Try more widely known names.", "trace": trace}
-    ids = [r["id"] for r in resolved]
-
-    scored = []
+    scored, resolved = [], []
     for d, loc in (districts or DISTRICTS).items():
-        places = qloo.insights("urn:entity:place", entity_ids=ids, location=loc, take=4)
+        env = qloo.recommend("place", seeds, filter_location=loc, limit=4)
+        if env.get("status") == "needs_input":
+            # drop inputs Qloo could not match unambiguously, then retry once
+            bad = {i.get("input") for i in (env.get("resolution") or {}).get("issues", [])}
+            seeds = [s for s in seeds if s not in bad]
+            trace.append({"step": "qloo.resolve: dropped unmatched", "output": sorted(x for x in bad if x)})
+            if not seeds:
+                return {"error": "Qloo could not match any of those. Try more widely known names.", "trace": trace}
+            env = qloo.recommend("place", seeds, filter_location=loc, limit=4)
+        if not resolved:
+            resolved = [{"input": x.get("input"), "name": x.get("name"), "id": x.get("entityId")}
+                        for x in (env.get("interpretation") or {}).get("signals", [])]
+            trace.append({"step": "qloo.recommend resolved signals", "output": resolved})
+        places = _summarize(env)
         if not places:
             continue
-        affs = [(p.get("query") or {}).get("affinity") for p in places]
-        affs = [a for a in affs if isinstance(a, (int, float))] or [0.0]
+        affs = [p["affinity"] for p in places if isinstance(p.get("affinity"), (int, float))] or [0.0]
         scored.append({"district": d, "score": round(sum(affs) / len(affs), 3), "places": [
-            {"name": p.get("name"), "id": p.get("entity_id"), "affinity": (p.get("query") or {}).get("affinity"),
-             "tags": [x.get("name") for x in p.get("tags", []) if isinstance(x, dict)][:3]} for p in places]})
+            {"name": p.get("name"), "id": p.get("entity_id"), "affinity": p.get("affinity"),
+             "why": p.get("explainability"), "info": (p.get("properties") or {}).get("short_description")
+             or (p.get("properties") or {}).get("address")} for p in places]})
     scored.sort(key=lambda s: -s["score"])
-    trace.append({"step": "qloo.insights(place) per district", "output": [[s["district"], s["score"]] for s in scored]})
+    trace.append({"step": "qloo.recommend(place) per district", "output": [[s["district"], s["score"]] for s in scored]})
     if not scored:
         return {"error": "No places came back for those tastes.", "trace": trace}
 
     pool = [(s["district"], p) for s in scored[:2] for p in s["places"]]
     route = [{"slot": slot, "district": dist, **p} for slot, (dist, p) in zip(TIME_SLOTS, pool)]
-    seeds = ", ".join(r["name"] for r in resolved)
-    summary = f"Because you love {seeds}, Qloo's taste graph points to {scored[0]['district']} first."
+    names = ", ".join(r["name"] or r["input"] for r in resolved) or ", ".join(seeds)
+    summary = f"Because you love {names}, Qloo's taste graph points to {scored[0]['district']} first."
     if llm:
         try:
-            summary = llm.narrate(seeds, scored[:3], route) or summary
+            summary = llm.narrate(names, scored[:3], route) or summary
         except Exception:
             pass
     trace.append({"step": "compose_route", "output": [r["slot"] + ": " + str(r["name"]) for r in route]})

@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: seoul-taste-agent
+    runtime: docker
+    plan: free
+    envVars:
+      - key: QLOO_API_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false

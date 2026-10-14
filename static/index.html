@@ -31,7 +31,7 @@ $("go").onclick=async()=>{
   const d=await r.json();
   if(d.error){$("out").innerHTML='<div class="card warn">'+esc(d.error)+'</div>';return}
   let h=(d.simulated?'<div class="card warn">SIMULATED data - not from Qloo.</div>':'')+'<div class="card">'+esc(d.summary)+'</div><h2>Your route</h2>';
-  d.route.forEach(x=>h+='<div class="card"><span class="slot">'+esc(x.slot)+'</span> in '+esc(x.district)+'<br><b>'+esc(x.name)+'</b> '+(x.affinity!=null?'<span class="mut">affinity '+esc(x.affinity)+'</span>':'')+'<br>'+(x.tags||[]).map(t=>'<span class="tag">'+esc(t)+'</span>').join("")+'</div>');
+  d.route.forEach(x=>h+='<div class="card"><span class="slot">'+esc(x.slot)+'</span> in '+esc(x.district)+'<br><b>'+esc(x.name)+'</b> '+(x.affinity!=null?'<span class="mut">affinity '+esc(x.affinity)+'</span>':'')+(x.info?'<br><span class="mut">'+esc(x.info)+'</span>':'')+'</div>');
   h+='<h2>Neighborhood match</h2>';
   const mx=Math.max(...d.districts.map(x=>x.score),0.0001);
   d.districts.forEach(x=>h+='<div class="card">'+esc(x.district)+' <span class="mut">'+esc(x.score)+'</span><div class="bar" style="width:'+(100*x.score/mx)+'%"></div></div>');

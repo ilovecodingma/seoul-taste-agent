@@ -5,23 +5,26 @@ Qloo Agentic Hackathon entry. An agent that turns a traveller's tastes (artists,
 ## How it works
 
 1. `parse_tastes` extracts cultural items from free text (optional LLM, deterministic fallback).
-2. `QlooClient.search` resolves each item to a Qloo entity ID.
-3. For each of 8 Seoul districts, `QlooClient.insights` (`filter.type=urn:entity:place`, `filter.location.query`, `signal.interests.entities`) returns taste-ranked places with affinity.
-4. Districts are ranked by mean affinity; the top two fill morning/afternoon/evening/late-night slots.
-5. The UI shows the route, the neighborhood scores and the full tool-call trace.
+2. For each of 8 Seoul districts the agent calls the official Qloo harness: `qloo exec recommend` with `target_type=place`, `signals=[your tastes]`, `filter_location=<district>`, explainability on. Qloo itself resolves the names to entities; unmatched names (`needs_input`) are dropped and retried.
+3. Districts are ranked by mean affinity; the top two fill morning/afternoon/evening/late-night slots.
+4. The UI shows the route, neighborhood scores and the full tool-call trace.
 
-Without Qloo, the agent has nothing to rank with: the matching is the Qloo call.
+Without Qloo the agent has nothing to rank with: the matching is the Qloo call.
 
 ## Run
 
+Requirements: Python 3.10+, Node.js 22.19+ and `npm install --global @qloo/qloo-harness` (the event-supported route; serverless/browser calls are not supported).
+
 ```
 python -m unittest discover -s tests -t .
-QLOO_API_KEY=... python -m app.server      # http://localhost:8080
+export QLOO_API_KEY=...        # event key, server-side only
+python scripts/live_check.py   # one real call
+python -m app.server           # http://localhost:8080
 ```
 
-Without `QLOO_API_KEY` the server starts in a clearly labelled offline simulation (synthetic data, not Qloo data) for development. Optional `ANTHROPIC_API_KEY` enables LLM parsing/narration.
+The hackathon key only works against `https://hackathon.api.qloo.com` (set automatically; override with `QLOO_BASE_URL`). Without `QLOO_API_KEY` the server starts in a clearly labelled offline simulation (synthetic data, not Qloo data). Optional `ANTHROPIC_API_KEY` enables LLM parsing/narration.
 
-Deploy: `Dockerfile` runs on any container host (Render, Fly.io, Hugging Face Spaces). Set `QLOO_API_KEY` as a host secret; the key never reaches the browser. Requests are rate-limited per IP to protect quota.
+Deploy: the `Dockerfile` (Node + harness + Python) and `render.yaml` target Render; set `QLOO_API_KEY` as a secret. Requests are rate-limited per IP to protect quota.
 
 ## Responsible use
 

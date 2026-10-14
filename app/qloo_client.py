@@ -1,78 +1,68 @@
-"""Thin Qloo Taste API client. The key is injected (env QLOO_API_KEY), never hard-coded.
+"""Qloo access through the official harness (`qloo exec`), the event-supported route.
 
-Hackathon base URL: https://hackathon.api.qloo.com  (header X-Api-Key, GET + query string).
-Response parsing is deliberately tolerant: Qloo wraps lists as {"results": [...]} or
-{"results": {"entities": [...]}} depending on endpoint.
+The hackathon key only works on https://hackathon.api.qloo.com. The key is read from the
+server environment (QLOO_API_KEY) and is never sent to the browser or committed.
+`qloo exec <workflow>` takes one JSON object on stdin and prints one normalized envelope:
+  {"status": ok|empty|needs_input|partial|degraded|error, "summary", "results": [...],
+   "interpretation", "resolution": {"issues": [...]}, "error": {"code","retryable","recovery"}}
+The harness resolves entity names to Qloo IDs itself, so we pass plain names as `signals`.
 """
 import json
 import os
+import shutil
+import subprocess
 import time
-import urllib.error
-import urllib.parse
-import urllib.request
 
-BASE_URL = os.environ.get("QLOO_BASE_URL", "https://hackathon.api.qloo.com")
+HACKATHON_BASE_URL = "https://hackathon.api.qloo.com"
 
 
 class QlooError(RuntimeError):
     pass
 
 
-def _entities(payload):
-    res = payload.get("results", payload) if isinstance(payload, dict) else payload
-    if isinstance(res, dict):
-        res = res.get("entities", [])
-    return res if isinstance(res, list) else []
-
-
-class QlooClient:
+class QlooHarnessClient:
     live = True
 
-    def __init__(self, api_key=None, base_url=BASE_URL, min_interval=0.25, timeout=20):
+    def __init__(self, api_key=None, base_url=None, binary=None, min_interval=0.3, timeout=90):
         self.api_key = api_key or os.environ.get("QLOO_API_KEY", "")
         if not self.api_key:
             raise QlooError("QLOO_API_KEY is not set")
-        self.base_url = base_url.rstrip("/")
-        self.min_interval = min_interval  # stay well below the 5 req/s guidance
-        self.timeout = timeout
+        self.binary = binary or os.environ.get("QLOO_BIN") or shutil.which("qloo")
+        if not self.binary:
+            raise QlooError("`qloo` not found. Install: npm install --global @qloo/qloo-harness (Node 22.19+)")
+        base = base_url or os.environ.get("QLOO_BASE_URL") or HACKATHON_BASE_URL
+        self.env = {**os.environ, "QLOO_API_KEY": self.api_key, "QLOO_BASE_URL": base, "QLOO_TRUSTED_BASE_URL": base}
+        self.min_interval, self.timeout = min_interval, timeout
         self._last = 0.0
         self._cache = {}  # private server-side cache (allowed by the event rules)
 
-    def _get(self, path, params):
-        qs = urllib.parse.urlencode({k: v for k, v in params.items() if v is not None})
-        url = f"{self.base_url}{path}?{qs}"
-        if url in self._cache:
-            return self._cache[url]
+    def exec(self, operation, payload):
+        key = operation + json.dumps(payload, sort_keys=True)
+        if key in self._cache:
+            return self._cache[key]
         wait = self.min_interval - (time.time() - self._last)
         if wait > 0:
             time.sleep(wait)
-        req = urllib.request.Request(url, headers={"X-Api-Key": self.api_key, "Accept": "application/json"})
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as r:
-                data = json.loads(r.read().decode("utf8"))
-        except urllib.error.HTTPError as e:
-            raise QlooError(f"Qloo HTTP {e.code} for {path}") from e
-        except urllib.error.URLError as e:
-            raise QlooError(f"Qloo unreachable: {e.reason}") from e
+            p = subprocess.run([self.binary, "exec", operation], input=json.dumps(payload), capture_output=True,
+                               text=True, encoding="utf8", env=self.env, timeout=self.timeout)
+        except subprocess.TimeoutExpired as e:
+            raise QlooError("Qloo timed out") from e
         finally:
             self._last = time.time()
-        self._cache[url] = data
-        return data
+        try:
+            env = json.loads(p.stdout)
+        except ValueError:
+            raise QlooError(f"qloo exec {operation} failed (exit {p.returncode})") from None
+        if env.get("status") == "error":
+            err = env.get("error") or {}
+            raise QlooError(f"Qloo {err.get('code', 'ERROR')}: {env.get('summary', '')}"[:200])
+        if env.get("status") == "ok":
+            self._cache[key] = env
+        return env
 
-    def search(self, query, entity_type=None, take=3):
-        """Resolve free text to Qloo entities."""
-        p = {"query": query, "take": take}
-        if entity_type:
-            p["types"] = entity_type
-        return _entities(self._get("/search", p))
-
-    def insights(self, entity_type, entity_ids=(), tags=(), location=None, take=5):
-        """Taste-based recommendations seeded by entity/tag signals."""
-        p = {"filter.type": entity_type, "take": take, "feature.explainability": "true"}
-        if entity_ids:
-            p["signal.interests.entities"] = ",".join(entity_ids)
-        if tags:
-            p["signal.interests.tags"] = ",".join(tags)
-        if location:
-            p["filter.location.query"] = location
-        return _entities(self._get("/v2/insights", p))
+    def recommend(self, target_type, signals, filter_location=None, limit=4):
+        body = {"target_type": target_type, "signals": signals, "limit": limit, "explain": True}
+        if filter_location:
+            body["filter_location"] = filter_location
+        return self.exec("recommend", body)
