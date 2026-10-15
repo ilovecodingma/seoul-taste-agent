@@ -91,12 +91,13 @@ class QlooRestClient:
         url = f"{self.base}{path}?{urllib.parse.urlencode(params, doseq=True)}"
         if url in self._cache:
             return self._cache[url]
-        req = urllib.request.Request(url, headers={"X-Api-Key": self.api_key, "Accept": "application/json"})
+        req = urllib.request.Request(url, headers={"X-Api-Key": self.api_key, "Accept": "application/json",
+                                                "User-Agent": "seoul-taste-agent/1.0 (+https://github.com/ilovecodingma/seoul-taste-agent)"})
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as r:
                 data = json.loads(r.read())
         except urllib.error.HTTPError as e:
-            raise QlooError(f"Qloo HTTP {e.code} on {path}") from None
+            raise QlooError(f"Qloo HTTP {e.code} on {path}: {e.read()[:120].decode('utf8', 'replace')}") from None
         except Exception as e:
             raise QlooError(f"Qloo request failed on {path}: {type(e).__name__}") from None
         self._cache[url] = data
