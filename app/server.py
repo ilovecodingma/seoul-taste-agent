@@ -7,7 +7,7 @@ from pathlib import Path
 
 from .agent import get_llm, run_agent
 from .mock import MockQloo
-from .qloo_client import QlooError, QlooHarnessClient
+from .qloo_client import QlooError, QlooHarnessClient, QlooRestClient
 
 STATIC = Path(__file__).resolve().parent.parent / "static"
 _hits = {}
@@ -15,6 +15,8 @@ _hits = {}
 
 def make_qloo():
     if os.environ.get("QLOO_API_KEY") and os.environ.get("FORCE_MOCK") != "1":
+        if os.environ.get("QLOO_TRANSPORT", "harness") == "rest":
+            return QlooRestClient()
         return QlooHarnessClient()
     return MockQloo()
 

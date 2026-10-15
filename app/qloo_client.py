@@ -68,3 +68,67 @@ class QlooHarnessClient:
         if filter_location:
             body["filter_location"] = filter_location
         return self.exec("recommend", body)
+
+
+class QlooRestClient:
+    """Documented hackathon REST route (X-Api-Key, https://hackathon.api.qloo.com): GET /search + GET /v2/insights.
+    Same recommend() interface and envelope shape as the harness client. Used where Node is too slow (Render free)."""
+    live = True
+    PREFER = ["artist", "movie", "tv_show", "book", "author", "video_game", "brand", "place"]
+
+    def __init__(self, api_key=None, base_url=None, timeout=30):
+        self.api_key = api_key or os.environ.get("QLOO_API_KEY", "")
+        if not self.api_key:
+            raise QlooError("QLOO_API_KEY is not set")
+        self.base = (base_url or os.environ.get("QLOO_BASE_URL") or HACKATHON_BASE_URL).rstrip("/")
+        self.timeout = timeout
+        self._cache = {}
+
+    def _get(self, path, params):
+        import urllib.error
+        import urllib.parse
+        import urllib.request
+        url = f"{self.base}{path}?{urllib.parse.urlencode(params, doseq=True)}"
+        if url in self._cache:
+            return self._cache[url]
+        req = urllib.request.Request(url, headers={"X-Api-Key": self.api_key, "Accept": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as r:
+                data = json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            raise QlooError(f"Qloo HTTP {e.code} on {path}") from None
+        except Exception as e:
+            raise QlooError(f"Qloo request failed on {path}: {type(e).__name__}") from None
+        self._cache[url] = data
+        return data
+
+    def _resolve(self, name):
+        if len(name) == 36 and name.count("-") == 4:
+            return {"id": name, "name": name, "type": None}
+        rs = self._get("/search", {"query": name, "limit": 10}).get("results") or []
+        def rank(r):
+            t = ((r.get("types") or [""])[0]).rsplit(":", 1)[-1]
+            exact = (r.get("name") or "").strip().lower() == name.strip().lower()
+            return (0 if exact else 1, self.PREFER.index(t) if t in self.PREFER else 99, -(r.get("popularity") or 0))
+        best = min((r for r in rs if r.get("entity_id")), key=rank, default=None)
+        if not best:
+            return None
+        return {"id": best["entity_id"], "name": best.get("name"), "type": (best.get("types") or [None])[0]}
+
+    def recommend(self, target_type, signals, filter_location=None, limit=4):
+        sigs, unresolved = [], []
+        for s in signals:
+            r = self._resolve(s)
+            (sigs if r else unresolved).append(r or s)
+        if unresolved and not sigs:
+            return {"status": "needs_input", "results": [], "resolution": {"issues": [{"input": u} for u in unresolved]}}
+        params = {"filter.type": "urn:entity:" + target_type, "signal.interests.entities": ",".join(s["id"] for s in sigs),
+                  "feature.explainability": "true", "take": limit}
+        if filter_location:
+            params["filter.location.query"] = filter_location
+        data = self._get("/v2/insights", params)
+        ents = (data.get("results") or {}).get("entities") or []
+        res = [{"entity_id": e.get("entity_id"), "name": e.get("name"), "affinity": (e.get("query") or {}).get("affinity"),
+                "explainability": (e.get("query") or {}).get("explainability"), "properties": e.get("properties")} for e in ents]
+        return {"status": "ok" if res else "empty", "results": res, "interpretation": {"signals": [
+            {"input": s["id"], "entityId": s["id"], "name": s["name"], "type": s["type"]} for s in sigs]}}

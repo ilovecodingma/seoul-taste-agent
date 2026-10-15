@@ -90,3 +90,18 @@ class T3(unittest.TestCase):
         self.assertNotIn("error", r)
         self.assertEqual(q.calls[-1], ["A1"])  # artist chosen over person, reused for later districts
         self.assertEqual(r["route"][0]["why"], "Matches your taste for Radiohead")
+
+
+class T4(unittest.TestCase):
+    def test_rest_client_envelope(self):
+        from app.qloo_client import QlooRestClient
+        c = QlooRestClient(api_key="k")
+        def fake(path, params):
+            if path == "/search":
+                return {"results": [{"name": "Radiohead", "entity_id": "P", "types": ["urn:entity:person"], "popularity": 0.9},
+                                    {"name": "Radiohead", "entity_id": "A", "types": ["urn:entity:artist"], "popularity": 0.8}]}
+            return {"results": {"entities": [{"entity_id": "x", "name": "Cafe", "query": {"affinity": 0.7}}]}}
+        c._get = fake
+        env = c.recommend("place", ["Radiohead"], "Seoul")
+        self.assertEqual(env["interpretation"]["signals"][0]["entityId"], "A")
+        self.assertEqual(env["results"][0]["affinity"], 0.7)

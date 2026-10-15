@@ -4,6 +4,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends python3 && rm -
 WORKDIR /srv
 COPY app app
 COPY static static
-ENV PORT=8080 QLOO_BASE_URL=https://hackathon.api.qloo.com QLOO_TRUSTED_BASE_URL=https://hackathon.api.qloo.com
+ENV PORT=8080 QLOO_TRANSPORT=rest QLOO_BASE_URL=https://hackathon.api.qloo.com QLOO_TRUSTED_BASE_URL=https://hackathon.api.qloo.com
 EXPOSE 8080
 CMD ["python3", "-m", "app.server"]

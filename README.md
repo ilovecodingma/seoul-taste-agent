@@ -24,6 +24,8 @@ python -m app.server           # http://localhost:8080
 
 The hackathon key only works against `https://hackathon.api.qloo.com` (set automatically; override with `QLOO_BASE_URL`). Without `QLOO_API_KEY` the server starts in a clearly labelled offline simulation (synthetic data, not Qloo data). Optional `ANTHROPIC_API_KEY` enables LLM parsing/narration.
 
+Transport: default is the official harness (`qloo exec`). `QLOO_TRANSPORT=rest` switches to the documented hackathon REST endpoints (`GET /search`, `GET /v2/insights`, `X-Api-Key`), same agent logic; the hosted demo uses it because Node cold starts are too slow on Render's free CPU.
+
 Deploy: the `Dockerfile` (Node + harness + Python) and `render.yaml` target Render; set `QLOO_API_KEY` as a secret. Requests are rate-limited per IP to protect quota.
 
 ## Responsible use
