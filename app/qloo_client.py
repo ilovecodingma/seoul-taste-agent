@@ -11,6 +11,7 @@ import json
 import os
 import shutil
 import subprocess
+import threading
 import time
 
 HACKATHON_BASE_URL = "https://hackathon.api.qloo.com"
@@ -34,22 +35,23 @@ class QlooHarnessClient:
         self.env = {**os.environ, "QLOO_API_KEY": self.api_key, "QLOO_BASE_URL": base, "QLOO_TRUSTED_BASE_URL": base}
         self.min_interval, self.timeout = min_interval, timeout
         self._last = 0.0
+        self._lock = threading.Lock()
         self._cache = {}  # private server-side cache (allowed by the event rules)
 
     def exec(self, operation, payload):
         key = operation + json.dumps(payload, sort_keys=True)
         if key in self._cache:
             return self._cache[key]
-        wait = self.min_interval - (time.time() - self._last)
-        if wait > 0:
-            time.sleep(wait)
+        with self._lock:  # space out call starts (thread-safe)
+            wait = self.min_interval - (time.time() - self._last)
+            if wait > 0:
+                time.sleep(wait)
+            self._last = time.time()
         try:
             p = subprocess.run([self.binary, "exec", operation], input=json.dumps(payload), capture_output=True,
                                text=True, encoding="utf8", env=self.env, timeout=self.timeout)
         except subprocess.TimeoutExpired as e:
             raise QlooError("Qloo timed out") from e
-        finally:
-            self._last = time.time()
         try:
             env = json.loads(p.stdout)
         except ValueError:

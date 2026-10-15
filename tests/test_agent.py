@@ -43,7 +43,7 @@ class T2(unittest.TestCase):
         q = FlakyQloo()
         r = run_agent("Radiohead, Zzzz", q)
         self.assertNotIn("error", r)
-        self.assertEqual(q.calls[-1], ["Radiohead"])
+        self.assertEqual(q.calls[-1], ["idRadiohead"])  # resolved id reused
 
     def test_harness_client_plumbing(self):
         import os, sys, tempfile, json
@@ -64,3 +64,29 @@ class T2(unittest.TestCase):
         finally:
             subprocess.run = real
         self.assertEqual(env["results"][0]["echo"]["filter_location"], "Seoul")
+
+
+class AmbiguousQloo:
+    live = True
+
+    def __init__(self):
+        self.calls = []
+
+    def recommend(self, target_type, signals, filter_location=None, limit=4):
+        self.calls.append(list(signals))
+        if "Radiohead" in signals:
+            return {"status": "needs_input", "resolution": {"issues": [{"input": "Radiohead", "candidates": [
+                {"id": "P1", "name": "Radiohead", "type": "urn:entity:person", "popularity": 0.99},
+                {"id": "A1", "name": "Radiohead", "type": "urn:entity:artist", "popularity": 0.9}]}]}, "results": []}
+        return {"status": "ok", "interpretation": {"signals": [{"input": s, "name": "Radiohead", "entityId": s} for s in signals]},
+                "results": [{"entity_id": "p1", "name": "Cafe", "affinity": 0.8,
+                             "explainability": {"signal.interests.entities": [{"entity_id": "A1", "score": 1}]}}]}
+
+
+class T3(unittest.TestCase):
+    def test_ambiguous_pinned_by_id(self):
+        q = AmbiguousQloo()
+        r = run_agent("Radiohead", q)
+        self.assertNotIn("error", r)
+        self.assertEqual(q.calls[-1], ["A1"])  # artist chosen over person, reused for later districts
+        self.assertEqual(r["route"][0]["why"], "Matches your taste for Radiohead")
